@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>RunbookPilot · Autonomous Self-RAG Incident Operations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Chakra+Petch:wght@600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        /* ==========================================================================
+       CYBER-INDUSTRIAL // BLACK & ELECTRIC YELLOW THEME
+       ========================================================================== */
+        :root {
+            --bg-void: #030405;
+            --bg-panel: rgba(10, 10, 12, 0.95);
+            --bg-card: rgba(18, 18, 22, 0.85);
+            --yellow-bright: #ffea00;
+            --yellow-amber: #f59e0b;
+            --yellow-border: rgba(255, 234, 0, 0.28);
+            --yellow-glow: rgba(255, 234, 0, 0.4);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --font-heading: 'Chakra Petch', sans-serif;
+            --font-body: 'Plus Jakarta Sans', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-void);
+            color: var(--text-main);
+            font-family: var(--font-body);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Industrial Mesh Grid & Ambient Glow Background */
+        .noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1;
+            opacity: 0.65;
+            background:
+                radial-gradient(circle at 10% 10%, rgba(255, 234, 0, 0.08) 0%, transparent 45%),
+                radial-gradient(circle at 90% 90%, rgba(245, 158, 11, 0.05) 0%, transparent 50%),
+                linear-gradient(rgba(255, 234, 0, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 234, 0, 0.025) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 36px 36px, 36px 36px;
+        }
+
+        .shell {
+            position: relative;
+            z-index: 2;
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            min-height: 100vh;
+            backdrop-filter: blur(10px);
+        }
+
+        /* ==========================================================================
+       COMMAND RAIL (SIDEBAR)
+       ========================================================================== */
+        .rail {
+            background: linear-gradient(180deg, #07080a 0%, #020304 100%);
+            border-right: 1px solid var(--yellow-border);
+            padding: 1.75rem 1.35rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            box-shadow: 15px 0 40px rgba(0, 0, 0, 0.9);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.95rem;
+            text-decoration: none;
+            color: inherit;
+            padding-bottom: 1.2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .brand .mark {
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-content: center;
+            background: #000;
+            border: 1.5px solid var(--yellow-bright);
+            border-radius: 8px;
+            box-shadow: 0 0 16px var(--yellow-glow), inset 0 0 8px rgba(255, 234, 0, 0.2);
+            position: relative;
+        }
+
+        .brand .mark span {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: var(--yellow-bright);
+            border-radius: 1px;
+            box-shadow: 0 0 6px var(--yellow-bright);
+        }
+
+        .brand .mark span:nth-child(1) {
+            top: 7px;
+        }
+
+        .brand .mark span:nth-child(2) {
+            bottom: 7px;
+            left: 7px;
+        }
+
+        .brand .mark span:nth-child(3) {
+            bottom: 7px;
+            right: 7px;
+        }
+
+        .brand strong {
+            font-family: var(--font-heading);
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: #fff;
+        }
+
+        .brand small {
+            font-family: var(--font-mono);
+            font-size: 0.6rem;
+            letter-spacing: 0.15em;
+            color: var(--yellow-bright);
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .rail-label {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+        }
+
+        .nav {
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+            padding: 0.8rem 1rem;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: left;
+            width: 100%;
+        }
+
+        .nav-item span {
+            font-size: 1rem;
+            color: var(--text-muted);
+            transition: color 0.2s ease;
+        }
+
+        .nav-item:hover {
+            color: #fff;
+            background: rgba(255, 234, 0, 0.04);
+            border-color: rgba(255, 234, 0, 0.15);
+        }
+
+        .nav-item.active {
+            color: #fff;
+            background: linear-gradient(90deg, rgba(255, 234, 0, 0.15), rgba(255, 234, 0, 0.02));
+            border: 1px solid var(--yellow-border);
+            border-left: 3px solid var(--yellow-bright);
+            box-shadow: 0 0 20px rgba(255, 234, 0, 0.15);
+        }
+
+        .nav-item.active span {
+            color: var(--yellow-bright);
+            text-shadow: 0 0 8px var(--yellow-bright);
+        }
+
+        /* Vault Upload Card */
+        .upload-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--yellow-border);
+            border-radius: 12px;
+            padding: 1.2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
+            position: relative;
+        }
+
+        .upload-panel::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 15%;
+            right: 15%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--yellow-bright), transparent);
+        }
+
+        .upload-panel .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            font-weight: 800;
+            color: var(--yellow-bright);
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        .upload-panel h3 {
+            font-family: var(--font-heading);
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .upload-panel p {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .dropzone {
+            border: 1.5px dashed var(--yellow-border);
+            background: rgba(255, 234, 0, 0.02);
+            border-radius: 8px;
+            padding: 0.95rem;
+            text-align: center;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.2rem;
+            transition: all 0.2s ease;
+        }
+
+        .dropzone:hover {
+            border-color: var(--yellow-bright);
+            background: rgba(255, 234, 0, 0.06);
+            box-shadow: 0 0 15px rgba(255, 234, 0, 0.2);
+        }
+
+        .dropzone input[type="file"] {
+            display: none;
+        }
+
+        .upload-icon {
+            font-size: 1.3rem;
+            color: var(--yellow-bright);
+            filter: drop-shadow(0 0 6px var(--yellow-bright));
+        }
+
+        .dropzone strong {
+            font-size: 0.82rem;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .dropzone small {
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            color: var(--text-muted);
+        }
+
+        .secondary-btn {
+            background: rgba(255, 234, 0, 0.08);
+            border: 1px solid var(--yellow-bright);
+            color: var(--yellow-bright);
+            padding: 0.65rem;
+            border-radius: 7px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .secondary-btn:hover {
+            background: var(--yellow-bright);
+            color: #000;
+            box-shadow: 0 0 20px rgba(255, 234, 0, 0.6);
+        }
+
+        .upload-panel .status {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--yellow-amber);
+            min-height: 18px;
+        }
+
+        .rail-footer {
+            margin-top: auto;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.85rem;
+            background: #000;
+            border: 1px solid rgba(255, 234, 0, 0.18);
+            border-radius: 8px;
+        }
+
+        .live-dot {
+            width: 9px;
+            height: 9px;
+            background-color: var(--yellow-bright);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--yellow-bright);
+            animation: pulse-indicator 1.4s infinite alternate;
+        }
+
+        .rail-footer strong {
+            display: block;
+            font-size: 0.78rem;
+            color: #fff;
+            font-family: var(--font-mono);
+        }
+
+        .rail-footer small {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+        }
+
+        /* ==========================================================================
+       MAIN WORKSPACE CONTAINER
+       ========================================================================== */
+        .workspace {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 2.25rem 3rem;
+            gap: 1.75rem;
+            max-width: 1480px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 1px solid rgba(255, 234, 0, 0.15);
+            padding-bottom: 1.5rem;
+        }
+
+        .topbar .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.18em;
+            color: var(--yellow-bright);
+            text-transform: uppercase;
+            text-shadow: 0 0 10px rgba(255, 234, 0, 0.4);
+            margin-bottom: 0.3rem;
+        }
+
+        .topbar h1 {
+            font-family: var(--font-heading);
+            font-size: 2.1rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: #fff;
+            text-shadow: 0 0 25px rgba(255, 234, 0, 0.15);
+        }
+
+        .topbar p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-top: 0.3rem;
+            max-width: 720px;
+        }
+
+        .engine-pill {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            font-weight: 800;
+            color: var(--yellow-bright);
+            background: rgba(255, 234, 0, 0.08);
+            border: 1px solid var(--yellow-bright);
+            padding: 0.45rem 1.1rem;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            box-shadow: 0 0 20px rgba(255, 234, 0, 0.3);
+            letter-spacing: 0.08em;
+        }
+
+        .pulse {
+            width: 7px;
+            height: 7px;
+            background: var(--yellow-bright);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--yellow-bright);
+            animation: pulse-indicator 1.2s infinite;
+        }
+
+        /* Pipeline Process Metrics */
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+        }
+
+        .metrics article {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 234, 0, 0.18);
+            border-radius: 10px;
+            padding: 1rem 1.15rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.25s ease;
+        }
+
+        .metrics article:hover {
+            border-color: var(--yellow-bright);
+            box-shadow: 0 0 20px rgba(255, 234, 0, 0.25);
+            transform: translateY(-2px);
+        }
+
+        .metrics article::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background: var(--yellow-bright);
+        }
+
+        .metrics article span {
+            font-family: var(--font-heading);
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: var(--yellow-bright);
+            text-shadow: 0 0 10px rgba(255, 234, 0, 0.4);
+        }
+
+        .metrics article strong {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .metrics article small {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+
+        /* ==========================================================================
+       VIEW MANAGER (TABS)
+       ========================================================================== */
+        .view-container {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 520px;
+        }
+
+        .app-view {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+            animation: fadeIn 0.25s ease-out;
+        }
+
+        .app-view.active {
+            display: flex;
+        }
+
+        /* INCIDENT CONSOLE VIEW */
+        .console {
+            background: var(--bg-panel);
+            border: 1px solid var(--yellow-border);
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(255, 234, 0, 0.02);
+            overflow: hidden;
+        }
+
+        .console-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            background: #050608;
+            border-bottom: 1px solid rgba(255, 234, 0, 0.18);
+        }
+
+        .console-head>div:first-child {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-family: var(--font-mono);
+            font-size: 0.78rem;
+            letter-spacing: 0.1em;
+            color: #fff;
+        }
+
+        .terminal-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--yellow-bright);
+            box-shadow: 0 0 8px var(--yellow-bright);
+        }
+
+        .session-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+        }
+
+        .session-id {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: var(--yellow-bright);
+            background: rgba(255, 234, 0, 0.08);
+            border: 1px solid var(--yellow-border);
+            padding: 0.3rem 0.75rem;
+            border-radius: 5px;
+        }
+
+        .new-session-btn {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 0.35rem 0.85rem;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .new-session-btn:hover {
+            background: #fff;
+            color: #000;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+        }
+
+        .messages {
+            flex: 1;
+            padding: 1.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.35rem;
+            overflow-y: auto;
+            max-height: 420px;
+        }
+
+        .message {
+            display: flex;
+            gap: 1rem;
+            max-width: 85%;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 800;
+            flex-shrink: 0;
+        }
+
+        .message.assistant .avatar {
+            background: #000;
+            border: 1.5px solid var(--yellow-bright);
+            color: var(--yellow-bright);
+            box-shadow: 0 0 12px rgba(255, 234, 0, 0.35);
+        }
+
+        .message-body {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .message-label {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            letter-spacing: 0.12em;
+            color: var(--yellow-amber);
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .bubble {
+            padding: 1.1rem 1.35rem;
+            border-radius: 8px;
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        .bubble.intro,
+        .message.assistant .bubble {
+            background: #111419;
+            border: 1px solid rgba(255, 234, 0, 0.2);
+            border-left: 2px solid var(--yellow-bright);
+            color: #e2e8f0;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .message.user .bubble {
+            background: linear-gradient(135deg, #24220b 0%, #15181e 100%);
+            border: 1px solid var(--yellow-border);
+            color: #fff;
+        }
+
+        .starters {
+            display: flex;
+            gap: 0.7rem;
+            padding: 0 1.75rem 1rem;
+            flex-wrap: wrap;
+        }
+
+        .starters button {
+            background: rgba(255, 234, 0, 0.04);
+            border: 1px solid rgba(255, 234, 0, 0.25);
+            color: #cbd5e1;
+            padding: 0.45rem 0.95rem;
+            border-radius: 5px;
+            font-size: 0.78rem;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .starters button:hover {
+            background: rgba(255, 234, 0, 0.12);
+            border-color: var(--yellow-bright);
+            color: var(--yellow-bright);
+            box-shadow: 0 0 12px rgba(255, 234, 0, 0.25);
+        }
+
+        .composer-wrap {
+            padding: 1.25rem 1.75rem 1.5rem;
+            background: #050608;
+            border-top: 1px solid rgba(255, 234, 0, 0.18);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .composer {
+            display: flex;
+            gap: 0.85rem;
+            background: #13161c;
+            border: 1px solid var(--yellow-border);
+            border-radius: 8px;
+            padding: 0.65rem 0.65rem 0.65rem 1rem;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.8);
+            transition: all 0.2s ease;
+        }
+
+        .composer:focus-within {
+            border-color: var(--yellow-bright);
+            box-shadow: 0 0 20px rgba(255, 234, 0, 0.3), inset 0 2px 5px rgba(0, 0, 0, 0.8);
+        }
+
+        .composer textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #fff;
+            font-family: var(--font-body);
+            font-size: 0.92rem;
+            resize: none;
+            line-height: 1.45;
+            padding-top: 0.3rem;
+        }
+
+        .composer textarea::placeholder {
+            color: #64748b;
+        }
+
+        .composer button {
+            background: var(--yellow-bright);
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 6px;
+            color: #000;
+            font-size: 1.25rem;
+            font-weight: 900;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            align-self: flex-end;
+            box-shadow: 0 0 15px rgba(255, 234, 0, 0.5);
+            transition: all 0.2s ease;
+        }
+
+        .composer button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px rgba(255, 234, 0, 0.9);
+        }
+
+        .composer-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: var(--text-muted);
+        }
+
+        .composer-note span:nth-child(2n) {
+            color: var(--yellow-amber);
+        }
+
+        /* SECONDARY VIEWS (VAULT & AUDIT TRAIL INFO CARDS) */
+        .view-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--yellow-border);
+            border-radius: 14px;
+            padding: 2rem;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+            flex: 1;
+        }
+
+        .view-card h2 {
+            font-family: var(--font-heading);
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: #fff;
+            letter-spacing: 0.02em;
+        }
+
+        .view-card p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.2rem;
+            margin-top: 1rem;
+        }
+
+        .info-box {
+            background: #0d1017;
+            border: 1px solid rgba(255, 234, 0, 0.2);
+            padding: 1.25rem;
+            border-radius: 8px;
+        }
+
+        .info-box h4 {
+            color: var(--yellow-bright);
+            margin-bottom: 0.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+        }
+
+        .info-box p {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin-bottom: 0;
+        }
+
+        /* Audit Trail Table */
+        .audit-table-wrap {
+            overflow-x: auto;
+            max-height: 450px;
+            border: 1px solid var(--yellow-border);
+            border-radius: 8px;
+        }
+
+        table.audit-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.82rem;
+        }
+
+        table.audit-table th {
+            font-family: var(--font-mono);
+            background: #050608;
+            color: var(--yellow-bright);
+            padding: 0.85rem 1rem;
+            border-bottom: 1px solid var(--yellow-border);
+            letter-spacing: 0.05em;
+        }
+
+        table.audit-table td {
+            padding: 0.9rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            color: #cbd5e1;
+        }
+
+        table.audit-table tr:hover td {
+            background: rgba(255, 234, 0, 0.02);
+        }
+
+        /* Keyframes */
+        @keyframes pulse-indicator {
+
+            0%,
+            100% {
+                opacity: 0.4;
+            }
+
+            50% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 1024px) {
+            .shell {
+                grid-template-columns: 1fr;
+            }
+
+            .rail {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--yellow-border);
+            }
+
+            .metrics {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .workspace {
+                padding: 1.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="noise"></div>
+    <div class="shell">
+        <!-- COMMAND RAIL -->
+        <aside class="rail">
+            <a class="brand" href="/">
+                <div class="mark"><span></span><span></span><span></span></div>
+                <div><strong>RunbookPilot</strong><small>SELF-RAG INCIDENT COPILOT</small></div>
+            </a>
+
+            <div class="rail-label">Control Center</div>
+            <nav class="nav">
+                <button class="nav-item active" data-target="copilotView"><span>◈</span> Incident Copilot</button>
+                <button class="nav-item" data-target="vaultView"><span>▱</span> Runbook Vault</button>
+                <button class="nav-item" data-target="auditView" id="loadAuditsBtn"><span>⌁</span> Audit Trail</button>
+            </nav>
+
+            <section class="upload-panel">
+                <div class="eyebrow">Private Knowledge</div>
+                <h3>Runbook Vault</h3>
+                <p>Upload and append SOPs, postmortems, architecture notes, and troubleshooting guides into active
+                    Qdrant vector memory.</p>
+                <label class="dropzone" for="fileInput">
+                    <input id="fileInput" type="file" accept=".pdf,.txt,.md,.docx" />
+                    <span class="upload-icon">⇧</span>
+                    <strong id="fileLabel">Choose runbook</strong>
+                    <small>PDF · TXT · MD · DOCX</small>
+                </label>
+                <button id="uploadBtn" class="secondary-btn">Add to knowledge base</button>
+                <div id="uploadStatus" class="status"></div>
+            </section>
+
+            <div class="rail-footer">
+                <span class="live-dot"></span>
+                <div><strong>Self-RAG Engine</strong><small>Qdrant + Groq + HF Embeddings + Tavily</small></div>
+            </div>
+        </aside>
+
+        <!-- WORKSPACE CONTAINER -->
+        <main class="workspace">
+            <header class="topbar">
+                <div>
+                    <div class="eyebrow">Production Reliability & SRE Copilot</div>
+                    <h1>Incident Response Console</h1>
+                    <p>Ground every infrastructure troubleshooting decision in private operational evidence — backed by
+                        recursive Self-RAG verification loops and real-time Tavily search fallbacks.</p>
+                </div>
+                <div class="engine-pill"><span class="pulse"></span> SELF-RAG ONLINE</div>
+            </header>
+
+            <section class="metrics">
+                <article>
+                    <span>01</span>
+                    <div><strong>Retrieve</strong><small>Private runbooks first</small></div>
+                </article>
+                <article>
+                    <span>02</span>
+                    <div><strong>Grade</strong><small>Keep relevant evidence</small></div>
+                </article>
+                <article>
+                    <span>03</span>
+                    <div><strong>Verify</strong><small>IsSUP + IsUSE logic</small></div>
+                </article>
+                <article>
+                    <span>04</span>
+                    <div><strong>Remember</strong><small>SQLite thread sessions</small></div>
+                </article>
+            </section>
+
+            <!-- DYNAMIC VIEWS -->
+            <div class="view-container">
+
+                <!-- VIEW 1: INCIDENT COPILOT (CHAT) -->
+                <section id="copilotView" class="app-view active console">
+                    <div class="console-head">
+                        <div><span class="terminal-dot"></span><strong>INCIDENT SESSION</strong></div>
+                        <div class="session-actions">
+                            <span id="sessionId" class="session-id">MEMORY / LIVE</span>
+                            <button id="newSessionBtn" class="new-session-btn">New Session</button>
+                        </div>
+                    </div>
+
+                    <div id="messages" class="messages">
+                        <div class="message assistant">
+                            <div class="avatar">R</div>
+                            <div class="message-body">
+                                <div class="message-label">RUNBOOKPILOT</div>
+                                <div class="bubble intro">
+                                    Describe a production symptom, deployment failure, infrastructure alert, or cloud
+                                    incident. I’ll remember this session across follow-up questions, check private
+                                    Qdrant runbooks first, verify grounded support, and trigger Tavily web search only
+                                    when local evidence falls short.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="starterPrompts" class="starters">
+                        <button
+                            data-q="Our checkout API is returning 502 errors after deployment. What should the on-call engineer check first?">502
+                            after deployment</button>
+                        <button
+                            data-q="CPU on the payments service is above 90%. What is our recommended response procedure?">High
+                            CPU incident</button>
+                        <button
+                            data-q="What should I verify when a Kubernetes pod keeps restarting with CrashLoopBackOff?">CrashLoopBackOff</button>
+                    </div>
+
+                    <div class="composer-wrap">
+                        <div class="composer">
+                            <textarea id="question" rows="2"
+                                placeholder="Describe the incident or ask an operations question..."></textarea>
+                            <button id="sendBtn" title="Run Self-RAG">➜</button>
+                        </div>
+                        <div class="composer-note">
+                            <span>SQLite conversation memory enabled</span>
+                            <span>•</span>
+                            <span>Private evidence prioritized</span>
+                            <span>•</span>
+                            <span>Internet search activates only when needed</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW 2: RUNBOOK VAULT (MORE PROJECT INFO ADDED) -->
+                <section id="vaultView" class="app-view view-card">
+                    <h2>Runbook Vault & Architecture Overview</h2>
+                    <p>RunbookPilot is an enterprise-grade Self-RAG assistant built for on-call engineers. It uses
+                        LangGraph to orchestrate stateful retrieval-augmented generation loops with rigorous quality
+                        checks.</p>
+
+                    <div class="info-grid">
+                        <div class="info-box">
+                            <h4>Qdrant Vector Database</h4>
+                            <p>Stores pre-chunked internal runbooks, SOPs, and postmortems embedded via Hugging Face
+                                models for lightning-fast semantic retrieval.</p>
+                        </div>
+                        <div class="info-box">
+                            <h4>Groq LLM Acceleration</h4>
+                            <p>Powered by high-throughput Groq production models to evaluate relevance, verify
+                                generation support (IsSUP), and grade usefulness (IsUSE).</p>
+                        </div>
+                        <div class="info-box">
+                            <h4>Tavily Web Search Fallback</h4>
+                            <p>When internal corporate knowledge comes up empty, the graph rewrites queries and queries
+                                Tavily to pull verified real-time technical documentation.</p>
+                        </div>
+                        <div class="info-box">
+                            <h4>SQLite Checkpoint State</h4>
+                            <p>Persists conversation turns across multi-step troubleshooting sessions for complete
+                                contextual awareness and audit trails.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW 3: AUDIT TRAIL -->
+                <section id="auditView" class="app-view view-card">
+                    <h2>System Audit Trail</h2>
+                    <p>Real-time telemetry and execution logs stored securely in local SQLite databases for
+                        post-incident review.</p>
+                    <div class="audit-table-wrap">
+                        <table class="audit-table">
+                            <thead>
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>User Question</th>
+                                    <th>Route / Engine</th>
+                                    <th>Web Used</th>
+                                    <th>Support Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auditTableBody">
+                                <tr>
+                                    <td colspan="5" style="text-align: center; color: var(--text-muted);">Loading audit
+                                        logs...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <script>
+        /* Tab Navigation Controller */
+        document.querySelectorAll('.nav-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.app-view').forEach(v => v.classList.remove('active'));
+
+                btn.classList.add('active');
+                const targetId = btn.getAttribute('data-target');
+                document.getElementById(targetId).classList.add('active');
+            });
+        });
+
+        /* Fetch audit logs from backend */
+        document.getElementById('loadAuditsBtn').addEventListener('click', async () => {
+            const tbody = document.getElementById('auditTableBody');
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Fetching audits...</td></tr>`;
+            try {
+                const res = await fetch('/api/audits?limit=25');
+                const data = await res.json();
+                if (!data.length) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No audit records found yet. Run an incident query first!</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = data.map(row => `
+          <tr>
+            <td><code style="font-family: var(--font-mono); font-size: 0.75rem;">${new Date(row.created_at).toLocaleTimeString()}</code></td>
+            <td style="font-weight: 500; color: #fff;">${row.question}</td>
+            <td><span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--yellow-bright);">${row.route || 'N/A'}</span></td>
+            <td>${row.used_web ? '<span style="color: var(--yellow-amber);">Yes</span>' : 'No'}</td>
+            <td><span style="font-family: var(--font-mono); font-size: 0.72rem; color: #34d399;">${row.support_status || 'N/A'}</span></td>
+          </tr>
+        `).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #ef4444;">Failed to load audit logs.</td></tr>`;
+            }
+        });
+    </script>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
