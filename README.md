@@ -2,177 +2,171 @@
 
 **Evidence-grounded incident response for cloud operations.**
 
-RunbookPilot is a self-hosted incident-response copilot. It searches your local operational knowledge base first, checks whether the retrieved material supports its answer, and can use Tavily web search when internal runbooks are not enough. LangGraph and SQLite preserve incident context between follow-up questions.
+RunbookPilot is a browser-based incident-response assistant for SRE, DevOps, and cloud operations teams. For evidence-based questions, it searches operational documents, checks whether retrieved material is relevant, and verifies generated answers against the available evidence. When configured, it can use Tavily for external search if internal runbooks do not provide enough evidence. LangGraph and SQLite preserve conversation context across follow-up questions.
 
-The project includes a browser-based chat interface, document uploads, source attribution, workflow traces, an audit API, and a command-line ingestion script. It is built with FastAPI, LangGraph, Groq, local Hugging Face embeddings, and persistent local Qdrant storage.
+The application is built with FastAPI, LangGraph, Groq, locally executed Hugging Face embeddings, Qdrant, Tavily, and SQLite. The repository also includes sample runbooks, an ingestion script, an upload interface, and an audit API.
 
-> **Important:** This is a demonstration application, not a production-ready incident-management or security platform. It does not include user authentication, authorization, tenant isolation, or a UI audit-history screen. Do not expose it to an untrusted network without adding appropriate security controls.
+> **Demo status and security:** This repository is a demonstration, not a production-ready incident-management or security platform. The application has no authentication, authorization, or tenant isolation. The web server started by `python app.py` listens on all network interfaces. Do not expose it to an untrusted network or submit sensitive operational data without first adding appropriate controls and reviewing the external services' data-handling terms.
 
 ## Contents
 
-- [How it works](#how-it-works)
+- [Architecture](#architecture)
+- [Request lifecycle](#request-lifecycle)
 - [Features](#features)
 - [Technology](#technology)
-- [Project layout](#project-layout)
+- [Repository layout](#repository-layout)
 - [Requirements](#requirements)
-- [Quick start](#quick-start)
+- [Setup](#setup)
 - [Configuration](#configuration)
-- [Add operational documents](#add-operational-documents)
-- [Use the application](#use-the-application)
+- [Index operational documents](#index-operational-documents)
+- [Run and use the application](#run-and-use-the-application)
 - [HTTP API](#http-api)
-- [Run with Docker](#run-with-docker)
-- [Data and persistence](#data-and-persistence)
+- [Data, persistence, and privacy](#data-persistence-and-privacy)
+- [Docker status](#docker-status)
 - [Troubleshooting](#troubleshooting)
-- [Limitations and production considerations](#limitations-and-production-considerations)
+- [Limitations and production readiness](#limitations-and-production-readiness)
 
-## How it works
+## Architecture
 
-For each chat request, RunbookPilot uses the following workflow:
+```mermaid
+flowchart LR
+    Engineer[On-call engineer] --> UI[Browser UI]
+    UI --> API[FastAPI]
+    API --> Graph[LangGraph Self-RAG workflow]
 
-```text
-User question
-    │
-    ▼
-Load conversation state from LangGraph / SQLite
-    │
-    ▼
-Rewrite a follow-up question with incident context
-    │
-    ▼
-Decide whether evidence retrieval is needed
-    ├── No ──► Generate a general response
-    │
-    └── Yes
-         │
-         ▼
-      Search the local Qdrant runbook collection
-         │
-         ▼
-      Grade retrieved documents for relevance
-         ├── Relevant ──► Generate answer from evidence
-         └── Not relevant ──► Rewrite query and retry
-                                │
-                                ▼
-                           Optional Tavily search
-                                │
-                                ▼
-                           Grade web evidence
-         │
-         ▼
-      Check answer support and usefulness
-         ├── Revise or retry when allowed
-         └── Return a safe no-evidence response if needed
-    │
-    ▼
-Save conversation state and audit record
-    │
-    ▼
-Return answer, route, sources, verification status, and trace
+    Graph --> Memory[(SQLite checkpoint<br/>thread_id)]
+    Graph --> Decision[Groq model<br/>route and rewrite]
+    Graph --> Search[Qdrant retrieval]
+    Search --> Embed[Local Hugging Face<br/>sentence embeddings]
+    Search --> Grade[Groq relevance grade]
+    Grade -->|Relevant evidence| Generate[Groq answer generation]
+    Grade -->|Insufficient evidence| Rewrite[Rewrite query]
+    Rewrite --> Search
+    Rewrite --> Web{Tavily configured?}
+    Web -->|Yes| Tavily[Tavily web search]
+    Web -->|No / no results| NoEvidence[No reliable-evidence response]
+    Tavily --> Grade
+    Generate --> Verify[Groq support check<br/>and usefulness check]
+    Verify -->|Revise or retry within configured limits| Generate
+    Verify -->|Accept| Response[Answer, sources, route, trace]
+    NoEvidence --> Response
+    Response --> API
+    API --> Audit[(SQLite audit database)]
+    API --> UI
+
+    Documents[documents/ or browser upload] --> Ingest[Load and split documents]
+    Ingest --> Embed
+    Embed --> Search
 ```
 
-The workflow uses the configured Groq chat model for retrieval decisions, query rewriting, evidence grading, response generation, and answer checks. When a request can be answered without retrieval, it can use the general-response path instead.
+### Important: configure Qdrant for persistent knowledge
+
+The vector-store implementation connects to a remote Qdrant service when **both** `QDRANT_URL` and `QDRANT_API_KEY` are configured. If either is missing, it creates an in-memory Qdrant client. That fallback is temporary and belongs only to the current process:
+
+- Vectors indexed by `python data_ingestion.py` in the fallback mode are lost when the script exits.
+- A separate web-server process will not see vectors held in the ingestion process.
+- Uploads indexed by the running web app are also lost when that app stops.
+
+Therefore, configure a reachable Qdrant service and both credentials before indexing documents for use by the application. The repository does not configure a persistent local Qdrant directory.
+
+## Request lifecycle
+
+For each chat request, the application follows this general path:
+
+1. **Load thread state.** LangGraph's SQLite checkpointer loads prior conversation state for the supplied `thread_id`.
+2. **Contextualize the question.** Follow-up questions are rewritten as standalone questions using recent conversation turns.
+3. **Choose a route.** The Groq model decides whether a question can use a general-knowledge response or requires evidence retrieval. Operations and incident questions are directed to retrieval.
+4. **Retrieve internal evidence.** The question is embedded locally and searched against the configured Qdrant collection. The top `TOP_K` chunks are considered.
+5. **Grade relevance.** Groq grades the retrieved chunks. If none are relevant, the graph can rewrite and retry internal retrieval up to `MAX_RETRIEVAL_REWRITES`.
+6. **Use web search if needed.** The workflow may rewrite the web query and call Tavily. Each result is graded before it can be used. If `TAVILY_API_KEY` is missing, no external search request can be made.
+7. **Generate and verify.** Groq generates an answer from the accepted evidence, checks whether its claims are supported, revises unsupported claims within `MAX_SUPPORT_RETRIES`, and checks whether the answer addresses the question.
+8. **Finish safely.** If sufficient reliable evidence is not found, the workflow returns a no-reliable-evidence response rather than recommending an unsupported troubleshooting action.
+9. **Persist and return.** The application checkpoints conversation state, writes an audit record, and returns the answer, source list, route, verification statuses, and trace.
+
+The retry limits bound graph loops; they do not guarantee that a model-generated answer is correct. Always use operational judgment and follow your organization's incident procedures.
 
 ## Features
 
-- **Private knowledge first:** retrieve from a persistent, local Qdrant collection before using external search.
-- **Self-RAG checks:** grade retrieved documents for relevance and check generated answers for evidence support and usefulness.
-- **Bounded retry loops:** configurable limits control internal query rewrites, web-query rewrites, and support-driven answer revisions.
-- **Optional web fallback:** search with Tavily when internal evidence is insufficient. Web-derived guidance is labeled separately from internal runbooks.
-- **Persistent incident context:** LangGraph's SQLite checkpointer keeps context by `thread_id`, allowing follow-up questions to refer to earlier turns.
-- **Document ingestion:** ingest PDF, TXT, Markdown, and DOCX files from the command line or browser.
-- **Source attribution:** return internal document names/pages and web result titles/URLs where available.
-- **Workflow transparency:** return a trace of retrieval, grading, rewriting, and answer checks.
-- **Audit records:** store chat questions, answers, route, sources, and workflow details in a separate SQLite database, available through the audit API.
-- **Local embeddings:** use a Hugging Face sentence-transformer model locally; no hosted embedding API is required.
-- **FastAPI application:** serve the browser UI and JSON API from the same application.
+- Internal runbook retrieval with Qdrant and local sentence-transformer embeddings.
+- A LangGraph Self-RAG workflow for question routing, relevance grading, query rewriting, answer generation, support checking, and usefulness checking.
+- Optional Tavily web-search fallback when internal evidence is insufficient.
+- SQLite conversation checkpoints keyed by `thread_id`.
+- SQLite audit records exposed through an HTTP endpoint.
+- Browser chat with a new-session action, sample incident questions, source details, and workflow trace.
+- Upload and index PDF, TXT, Markdown, and DOCX files through the browser.
+- Command-line ingestion of supported files from `documents/`.
+- Source metadata for internal documents and web results, including PDF page numbers where available.
 
 ## Technology
 
 | Component | Role |
 | --- | --- |
-| FastAPI + Uvicorn | Web server, browser UI, and JSON API |
-| LangGraph | Self-RAG workflow and conditional routing |
-| Groq | Chat model for decisions, generation, and verification |
-| Hugging Face Sentence Transformers | Local document and query embeddings |
-| Qdrant local mode | Persistent vector search for internal documents |
-| Tavily | Optional internet-search fallback |
-| SQLite | LangGraph conversation checkpoints and chat audit records |
-| Jinja2, HTML, CSS, JavaScript | Browser-based incident console |
+| FastAPI and Uvicorn | Serve the browser application and JSON endpoints |
+| LangGraph | Orchestrate conditional Self-RAG steps and conversation checkpoints |
+| Groq | Chat model for routing, rewriting, grading, generation, and verification |
+| Hugging Face Sentence Transformers | Create query and document embeddings locally |
+| Qdrant | Store and search document vectors; use Qdrant Cloud for persistence across processes |
+| Tavily | Optional external search fallback |
+| SQLite | LangGraph checkpoint storage and a separate audit database |
+| Jinja2, HTML, CSS, JavaScript | Render and operate the browser UI |
 
-## Project layout
+## Repository layout
 
 ```text
 RunbookPilot/
-├── app.py                   # FastAPI application and HTTP endpoints
-├── data_ingestion.py        # Ingest documents/ into Qdrant
-├── requirements.txt         # Python dependencies
-├── Dockerfile               # Container image definition
-├── .env.example             # Environment-variable template
-├── documents/               # Initial internal runbooks and SOPs
+├── app.py                 # FastAPI app, UI routes, chat/upload/audit endpoints
+├── data_ingestion.py      # CLI entry point for indexing documents/
+├── requirements.txt       # Python runtime dependencies
+├── documents/             # Sample operational runbooks and SOPs
 ├── src/
-│   ├── config.py            # Environment settings and defaults
-│   ├── db.py                # SQLite audit database
-│   ├── ingestion.py         # File loading, splitting, and indexing
-│   ├── models.py            # API request and response models
-│   ├── self_rag.py          # LangGraph workflow and memory
-│   └── vectorstore.py       # Embeddings and Qdrant configuration
+│   ├── config.py          # Environment configuration and defaults
+│   ├── db.py              # SQLite audit database
+│   ├── ingestion.py       # Load, split, and index supported documents
+│   ├── models.py          # Pydantic API request/response models
+│   ├── self_rag.py        # LangGraph workflow and SQLite checkpointing
+│   └── vectorstore.py     # Embeddings, Qdrant client, collection, retriever
 ├── templates/
-│   └── index.html           # Browser application
+│   └── index.html         # Browser application
 ├── static/
-│   ├── app.js               # Browser/API interaction
-│   └── styles.css           # UI styles
-├── data/                    # Local Qdrant and SQLite files
-├── uploads/                 # Files uploaded through the browser
-└── docs/                    # Supporting project documentation/assets
+│   ├── app.js             # Browser interactions and API calls
+│   └── styles.css         # Additional stylesheet; current page embeds its CSS
+├── data/                  # Runtime SQLite files; created as needed
+├── uploads/               # Browser-uploaded source files
+├── docs/                  # Supporting documentation and assets
+└── Self-Rag-Code/         # Companion notebooks and reference materials
 ```
 
 ## Requirements
 
-- Python 3.10 or newer (the Docker image uses Python 3.11)
-- A Groq API key for chat and Self-RAG operations
-- Internet access on first run to download the embedding model
-- Optional Tavily API key to enable web-search fallback
-- Docker Engine/Desktop only if using the container instructions
+- Python 3.10 or newer. Python 3.11 is a suitable choice.
+- A Groq API key for chat and Self-RAG model calls.
+- A Qdrant service and credentials (`QDRANT_URL` and `QDRANT_API_KEY`) for a persistent knowledge base shared by ingestion and the web app.
+- Internet access on first use to download the Hugging Face embedding model.
+- A Tavily API key only if external web search is required.
 
-The embedding model runs locally on CPU by default. Model download and inference speed depend on the host machine and network.
+The embedding model runs locally on CPU by default. The first embedding operation downloads the model if it is not already in the Hugging Face cache. Download time and inference performance depend on the network and host machine.
 
-## Quick start
+## Setup
 
-### 1. Get the project and enter its directory
+### 1. Open a terminal in the repository root
 
-Open a terminal in the project root—the directory containing `app.py` and `requirements.txt`.
+The repository root is the directory containing `app.py` and `requirements.txt`.
 
 ### 2. Create and activate a virtual environment
 
 **Windows PowerShell**
-
-If you already have a `venv` folder in the project, activate that environment:
-
-```powershell
-.\venv\Scripts\Activate.ps1
-```
-
-To create a new environment instead, run both commands:
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-If PowerShell blocks script activation, you can allow it for this terminal session:
+If PowerShell prevents activation, allow scripts for this terminal session and activate again:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 ```
-
-Use `.\.venv\Scripts\Activate.ps1` instead in the new-environment instructions above. Alternatively, in Command Prompt activate the existing `venv`:
-
-```bat
-venv\Scripts\activate.bat
-```
-
-For a new `.venv`, use `.venv\Scripts\activate.bat` instead.
 
 **macOS / Linux**
 
@@ -181,7 +175,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install Python dependencies
 
 ```bash
 python -m pip install --upgrade pip
@@ -190,86 +184,94 @@ python -m pip install -r requirements.txt
 
 ### 4. Configure environment variables
 
-Copy `.env.example` to `.env` and add your Groq API key. The `.env` file is ignored by Git; keep it private.
+There is no `.env.example` in the repository. Create a file named `.env` in the repository root and add your own values. `.env` is ignored by Git; never commit API keys.
 
-**Windows PowerShell**
-
-```powershell
-Copy-Item .env.example .env
-```
-
-**macOS / Linux**
-
-```bash
-cp .env.example .env
-```
-
-At a minimum, set:
+At minimum, add Groq credentials and a Qdrant service URL and API key:
 
 ```env
-GROQ_API_KEY=your_groq_api_key
+GROQ_API_KEY=replace_with_your_groq_api_key
+QDRANT_URL=https://your-qdrant-cluster.example
+QDRANT_API_KEY=replace_with_your_qdrant_api_key
 ```
 
-Add a `TAVILY_API_KEY` if you want web search. See [Configuration](#configuration) for all supported settings.
+For example, create/edit the file on Windows with:
 
-### 5. Index the included runbooks
+```powershell
+notepad .env
+```
+
+On macOS/Linux, use your preferred text editor, for example:
+
+```bash
+nano .env
+```
+
+Add `TAVILY_API_KEY` if you want the workflow to perform external searches. See [Configuration](#configuration) for defaults and optional settings.
+
+### 5. Index the sample runbooks
+
+After configuring Qdrant, index the included files:
 
 ```bash
 python data_ingestion.py
 ```
 
-The first run downloads the embedding model if it is not already cached. The script creates or validates the configured Qdrant collection, reads supported files from `documents/`, splits them into chunks, embeds them locally, and stores them in Qdrant.
+The script creates the configured collection if it does not exist, loads supported files from `documents/`, splits and embeds them, then writes the vectors to Qdrant. It currently checks for `GROQ_API_KEY` before ingestion even though document embedding itself uses the local embedding model.
 
-### 6. Start RunbookPilot
+### 6. Start the application
 
-```bash
-python app.py
-```
-
-Or run Uvicorn directly:
+For local-only access, run Uvicorn bound to the loopback interface:
 
 ```bash
 uvicorn app:app --host 127.0.0.1 --port 8080 --reload
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in a browser. The first chat request also needs a valid Groq API key.
+Alternatively:
+
+```bash
+python app.py
+```
+
+`python app.py` starts Uvicorn on `0.0.0.0:8080` with reload enabled, making the service listen on all network interfaces. Use the loopback-bound Uvicorn command for local development unless network access is intentional and appropriately protected.
+
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) for the UI. FastAPI's interactive API documentation is at [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs).
 
 ## Configuration
 
-Settings are read from environment variables (typically from `.env`). Defaults are defined in `src/config.py`.
+Settings are read from the process environment and `.env`; defaults are defined in `src/config.py`.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `GROQ_API_KEY` | *(required for chat)* | Groq API key. |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model used for chat, workflow decisions, and verification. |
-| `GROQ_MAX_TOKENS` | `1024` | Maximum tokens for standard model calls. Structured Self-RAG checks use a separate 256-token limit. |
-| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Local Hugging Face sentence-transformer model. |
-| `EMBEDDING_DIMENSION` | `384` | Vector size for the configured embedding model. Must match the model and existing collection. |
-| `QDRANT_PATH` | `data/qdrant` | Local persistent Qdrant directory. Relative paths are resolved from the project root. |
-| `QDRANT_COLLECTION_NAME` | `cloudops_sentinel` | Qdrant collection used for both ingestion and retrieval. |
-| `TAVILY_API_KEY` | *(optional)* | Enables internet-search fallback when configured. |
-| `TOP_K` | `5` | Number of documents requested from Qdrant per retrieval. |
-| `MAX_SUPPORT_RETRIES` | `2` | Maximum answer revisions after support checks. |
-| `MAX_RETRIEVAL_REWRITES` | `2` | Maximum query rewrites for internal retrieval. |
-| `MAX_WEB_REWRITES` | `2` | Maximum web-query rewrites. |
-| `DATABASE_PATH` | `data/audit.db` | Path to the audit database. Relative paths are resolved from the project root. |
+| `GROQ_API_KEY` | Empty | Required for chat and Self-RAG model calls. The ingestion script also currently requires it as a preflight check. |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model used for workflow and answer calls. |
+| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Hugging Face sentence-transformer model loaded locally. |
+| `EMBEDDING_DIMENSION` | `384` | Vector size used when creating a Qdrant collection. It must match the embedding model's output size and the existing collection. |
+| `QDRANT_URL` | Empty | Qdrant service URL. Must be set together with `QDRANT_API_KEY` to use the remote Qdrant client. |
+| `QDRANT_API_KEY` | Empty | Qdrant service API key. If either Qdrant setting is missing, the implementation falls back to in-memory Qdrant. |
+| `QDRANT_COLLECTION_NAME` | `cloudops_sentinel` | Qdrant collection used for indexing and retrieval. |
+| `TAVILY_API_KEY` | Empty | Optional key for Tavily web search. |
+| `TOP_K` | `5` | Number of Qdrant results requested for each retrieval. |
+| `MAX_SUPPORT_RETRIES` | `2` | Maximum answer revisions after an evidence-support check. |
+| `MAX_RETRIEVAL_REWRITES` | `2` | Maximum rewritten queries for internal retrieval. |
+| `MAX_WEB_REWRITES` | `2` | Maximum rewritten web queries. |
+| `DATABASE_PATH` | `data/audit.db` | Audit SQLite database path. Relative paths resolve from the repository root. |
 
-Example configuration:
+Example `.env` for a typical setup:
 
 ```env
-GROQ_API_KEY=your_groq_api_key
-TAVILY_API_KEY=your_tavily_api_key
-
-GROQ_MODEL=llama-3.3-70b-versatile
-GROQ_MAX_TOKENS=1024
+GROQ_API_KEY=replace_with_your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-120b
 
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIMENSION=384
 
-QDRANT_PATH=data/qdrant
+QDRANT_URL=https://your-qdrant-cluster.example
+QDRANT_API_KEY=replace_with_your_qdrant_api_key
 QDRANT_COLLECTION_NAME=cloudops_sentinel
-TOP_K=5
 
+TAVILY_API_KEY=replace_with_your_tavily_api_key
+
+TOP_K=5
 MAX_SUPPORT_RETRIES=2
 MAX_RETRIEVAL_REWRITES=2
 MAX_WEB_REWRITES=2
@@ -277,67 +279,67 @@ MAX_WEB_REWRITES=2
 DATABASE_PATH=data/audit.db
 ```
 
-The collection's default identifier retains the earlier `cloudops_sentinel` name to keep existing local Qdrant data connected after the RunbookPilot rebrand. You can select a different collection with `QDRANT_COLLECTION_NAME`; that collection will not contain the old collection's vectors unless you ingest the documents into it.
+`TAVILY_API_KEY` may be omitted if external search is not desired. `GROQ_API_KEY`, `QDRANT_URL`, and `QDRANT_API_KEY` should be set before following the sample knowledge-base setup.
 
-If a collection exists with a vector dimension different from `EMBEDDING_DIMENSION`, RunbookPilot stops with a configuration error. Use a compatible embedding model/dimension or choose a new collection after backing up any data you need.
+## Index operational documents
 
-## Add operational documents
+### Supported formats
 
-### Supported file types
-
-RunbookPilot accepts:
-
-- PDF (`.pdf`)
-- Plain text (`.txt`)
-- Markdown (`.md`)
-- Word documents (`.docx`)
+| Extension | Loader behavior |
+| --- | --- |
+| `.pdf` | Extracts text and page metadata using `PyPDFLoader`. Scanned/image-only PDFs are not OCR-processed. |
+| `.txt` | Reads UTF-8 text. |
+| `.md` | Reads UTF-8 Markdown as text. |
+| `.docx` | Reads document paragraphs. Tables and embedded content are not extracted by the current loader. |
 
 ### Initial or batch ingestion
 
-1. Place supported files directly inside `documents/`.
-2. Run:
+1. Put supported documents directly in `documents/` (not only in a nested folder).
+2. Ensure the app and the ingestion script use the same `.env`, Qdrant URL, API key, and collection name.
+3. Run:
 
    ```bash
    python data_ingestion.py
    ```
 
-The ingestion script uses the same embedding model, vector dimension, Qdrant path, and collection as the application. Files are split into chunks of 800 characters with 160 characters of overlap. Stable chunk IDs make re-ingesting unchanged chunks update their existing points instead of blindly adding randomly identified duplicates.
+The ingestion pipeline splits documents into chunks of 800 characters with 160 characters of overlap. It adds source and document metadata and uses deterministic chunk IDs so matching chunks can be updated on re-ingestion. If a document is replaced with a shorter version or removed, old unmatched vectors are not automatically deleted; clean up stale points in Qdrant as part of your document lifecycle.
 
 ### Upload through the browser
 
-1. Open the RunbookPilot page.
-2. Select a PDF, TXT, Markdown, or DOCX file in **Runbook Vault**.
-3. Select **Add to knowledge base**.
-4. Wait for the indexed chunk count and collection identifier.
-5. Ask a question that needs the new runbook.
+1. Open **Runbook Vault** in the application.
+2. Select a PDF, TXT, Markdown, or DOCX file.
+3. Choose **Add to knowledge base** and wait for the indexing result.
+4. Ask a question that uses information from the new document.
 
-Uploads are stored under `uploads/` and indexed into the same collection used by the initial ingestion script.
+Uploaded source files are stored under `uploads/` and indexed into the same Qdrant collection used by the command-line script. With in-memory fallback enabled, vectors only remain available for the life of that web process.
 
-## Use the application
+## Run and use the application
 
-- **Ask an incident question:** enter a production symptom or operational question and submit it.
-- **Continue an incident:** ask a follow-up; the browser reuses its saved thread ID and LangGraph can use earlier conversation context.
-- **Start a fresh incident:** select **New Session** to generate a new thread ID.
-- **Inspect evidence:** review the displayed source list, route, support/usefulness statuses, and expandable Self-RAG trace.
-- **Add a runbook:** use the Runbook Vault upload panel.
-- **Use sample questions:** select one of the incident prompts to populate the composer.
+- **Ask a question:** describe an incident or operational issue in the chat composer.
+- **Continue an incident:** keep using the current browser session; the UI sends the same `thread_id` for follow-up questions.
+- **Start a new incident:** select **New Session** to create a new thread ID. This starts a separate conversation but does not delete old checkpoints.
+- **Inspect an answer:** review its route, support/usefulness statuses, sources, and expandable workflow trace.
+- **Add internal knowledge:** upload a supported document through **Runbook Vault**.
+- **Review audits:** use `GET /api/audits`. The API exists, but the audit-navigation button in the browser is not wired to load the audit records.
 
-Browser thread IDs are stored in `localStorage`. Existing sessions from the previous browser key are reused and migrated to the new key when possible. Clearing browser storage starts a new browser-side session; existing checkpoint records are not automatically deleted.
+The active thread ID is stored in the browser's `localStorage`. Clearing that value starts a new browser session; it does not remove the associated server-side checkpoint.
 
 ## HTTP API
 
-The API is served by the same FastAPI application. Interactive API documentation is available at [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs) while the server is running.
+The API is served by the same FastAPI process. Use `/docs` for the generated OpenAPI reference.
 
 ### `GET /api/health`
 
-Returns a basic service status. This is a liveness check; it does not verify Groq, Tavily, Qdrant, or model availability.
+Returns a basic liveness response:
 
 ```json
 {
   "status": "ok",
-  "service": "runbookpilot-self-rag"
+  "service": "cloudops-sentinel-self-rag"
 }
 ```
+
+This endpoint does not check Groq, Qdrant, Tavily, or embedding-model availability.
 
 ### `POST /api/chat`
 
@@ -346,13 +348,13 @@ Request JSON:
 ```json
 {
   "question": "Our checkout API is returning 502 errors after deployment. What should I check first?",
-  "thread_id": "incident-unique-session-id"
+  "thread_id": "incident-demo-001"
 }
 ```
 
-`question` must contain 2–2000 characters and `thread_id` must contain 3–120 characters.
+`question` must be 2–2000 characters. `thread_id` must be 3–120 characters.
 
-Example using `curl`:
+Example:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/chat \
@@ -364,97 +366,69 @@ The response includes:
 
 | Field | Description |
 | --- | --- |
-| `answer` | Generated response. |
+| `answer` | Generated answer or the no-reliable-evidence message. |
 | `route` | `Private Runbooks`, `Internet Search`, `General Knowledge`, or `No Reliable Evidence`. |
-| `used_web_search` | Whether the workflow entered the web-search path. Configure Tavily to perform an actual search. |
-| `support_status` | Evidence support result when applicable. |
-| `usefulness` | Usefulness-check result when applicable. |
-| `sources` | Internal document or web sources used for the answer. |
-| `trace` | Workflow steps recorded during this request. |
-| `thread_id` | Conversation identifier supplied by the caller. |
-| `memory_turns` | Number of conversation entries in the returned checkpoint state. |
+| `used_web_search` | Whether the workflow entered the web-search path. This can be true even when Tavily is not configured. |
+| `support_status` | Evidence-support result when an evidence-based answer was generated. |
+| `usefulness` | Result of the usefulness check when run. |
+| `sources` | Relevant internal documents or web sources, with page or URL metadata where available. |
+| `trace` | Workflow steps recorded for this request. |
+| `thread_id` | Conversation identifier supplied in the request. |
+| `memory_turns` | Number of conversation entries in the checkpoint state. |
 
 ### `POST /api/upload`
 
-Multipart form upload with a field named `file`. Supported extensions are `.pdf`, `.txt`, `.md`, and `.docx`. The response contains the filename, number of indexed chunks, and collection identifier.
+Accepts a multipart form upload with the field name `file`. Supported file extensions are `.pdf`, `.txt`, `.md`, and `.docx`. The response includes the filename, indexed chunk count, and Qdrant collection name (`namespace`).
 
 ### `GET /api/audits?limit=20`
 
-Returns recent chat audit records. `limit` is bounded to 1–100. This endpoint is not currently connected to the **Audit Trail** navigation item in the browser UI.
+Returns recent audit records. `limit` is bounded to 1–100. Records contain timestamps, questions, answers, route, web-search flag, support/usefulness statuses, trace, and sources. The audit table does not currently store the `thread_id`.
 
-## Run with Docker
+## Data, persistence, and privacy
 
-The repository includes a `Dockerfile`. From the project root, build the image:
+| Location | Contents | Persistence behavior |
+| --- | --- | --- |
+| Configured Qdrant collection | Embedded document chunks and metadata | Persistent/shared when both Qdrant URL and API key point to a persistent Qdrant service. Otherwise in-memory only. |
+| `data/langgraph_memory.sqlite` | LangGraph conversation checkpoints keyed by thread ID | Created and used by the graph; its path is fixed in `src/self_rag.py`. |
+| `data/audit.db` | Chat audit rows | Created by the app; configurable with `DATABASE_PATH`. |
+| `uploads/` | Original files uploaded from the browser | Stored on the app host; not automatically deleted after indexing. |
+| Browser `localStorage` | Active browser thread ID | Local to that browser profile; clearing it does not delete server-side checkpoints. |
+| Hugging Face model cache | Downloaded embedding model files | Managed by the Hugging Face cache outside the repository by default. |
 
-```bash
-docker build -t runbookpilot:latest .
-```
+Embeddings are computed locally, but prompts and relevant document context are sent to Groq for model calls. If Tavily is configured, search queries are sent to Tavily. Qdrant Cloud receives embedded document vectors and their metadata. Review your organization's privacy requirements before indexing or querying confidential operational data.
 
-Run the service with persistent Docker volumes for the local databases and uploads:
+## Docker status
 
-```bash
-docker run -d \
-  --name runbookpilot \
-  -p 8080:8080 \
-  --env-file .env \
-  -v runbookpilot-data:/app/data \
-  -v runbookpilot-uploads:/app/uploads \
-  runbookpilot:latest
-```
-
-On Windows PowerShell, run the same Docker command on one line:
-
-```powershell
-docker run -d --name runbookpilot -p 8080:8080 --env-file .env -v runbookpilot-data:/app/data -v runbookpilot-uploads:/app/uploads runbookpilot:latest
-```
-
-Index the example documents in the running container:
-
-```bash
-docker exec runbookpilot python data_ingestion.py
-```
-
-Then open [http://127.0.0.1:8080](http://127.0.0.1:8080). The container uses port `8080` by default; the application port can be changed by setting `PORT`.
-
-The named volumes preserve `/app/data` and `/app/uploads` when the container is replaced. The first container run may need network access to download the embedding model. To stop and remove the container while preserving its data volumes:
-
-```bash
-docker stop runbookpilot
-docker rm runbookpilot
-```
-
-## Data and persistence
-
-| Path | Purpose |
-| --- | --- |
-| `data/qdrant/` | Persistent local Qdrant vector database. |
-| `data/langgraph_memory.sqlite` | LangGraph conversation checkpoints, keyed by thread ID. This path is currently fixed in `src/self_rag.py`. |
-| `data/audit.db` | Chat audit records; path is configurable with `DATABASE_PATH`. |
-| `uploads/` | Files submitted using the browser upload feature. |
-
-The browser stores its active thread ID in `localStorage`; LangGraph stores the associated conversation checkpoint on the server. The audit database is separate from conversation memory.
+The repository currently contains an empty `Dockerfile`; Docker build and run instructions would therefore be misleading. Use the Python setup above until a working container definition and persistence configuration are added. In particular, any container deployment must persist the SQLite files and uploaded documents and configure a shared, persistent Qdrant service.
 
 ## Troubleshooting
 
-### `GROQ_API_KEY is not configured`
+### `GROQ_API_KEY is not configured` or missing
 
-Add a valid `GROQ_API_KEY` to `.env` in the project root, then restart the application. Chat and Self-RAG model calls require Groq credentials.
+Add a valid `GROQ_API_KEY` to `.env` in the repository root and restart the process. The chat workflow requires Groq. The current ingestion script also checks this key before starting.
 
-### Qdrant vector-size mismatch
+### No internal runbooks are retrieved
 
-The embedding model's output dimension must match `EMBEDDING_DIMENSION` and the selected collection. Use a compatible model/dimension or select a new collection with `QDRANT_COLLECTION_NAME`. Back up data before removing or replacing a collection.
+- Confirm supported documents are directly inside `documents/` or were uploaded successfully.
+- Run `python data_ingestion.py` and inspect its output for the indexed chunk count.
+- Confirm the application and ingestion use the same `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION_NAME`.
+- Confirm both Qdrant settings are present. If not, the app uses a process-local in-memory store.
 
-### No internal documents are found
+### Vectors disappear after restarting or are missing in the app
 
-Confirm that supported files are directly inside `documents/`, then rerun `python data_ingestion.py`. Check that the ingestion and application processes use the same `.env`, `QDRANT_PATH`, and `QDRANT_COLLECTION_NAME`.
+This usually means the Qdrant fallback is in use. Set both `QDRANT_URL` and `QDRANT_API_KEY` to the same persistent Qdrant service for ingestion and application processes, then re-index the documents.
 
-### Web fallback does not return results
+### Qdrant vector size or collection errors
 
-Set `TAVILY_API_KEY` and restart the application. Without the key, the workflow records that internet search is unavailable and can return a no-reliable-evidence result instead.
+`EMBEDDING_DIMENSION` must match the output size of `EMBEDDING_MODEL` and the collection's vector configuration. The code creates a collection when it does not exist but does not validate the dimensions of an existing collection. Check the collection configuration or choose a new collection name before ingesting with a different model.
 
-### Port 8080 is already in use
+### Web fallback returns no results
 
-Run Uvicorn on another port, for example:
+Set a valid `TAVILY_API_KEY` and restart the application. Without it, the graph records that search is unavailable and can return a no-reliable-evidence response.
+
+### Port 8080 is in use
+
+Choose another port, for example:
 
 ```bash
 uvicorn app:app --host 127.0.0.1 --port 8081 --reload
@@ -462,16 +436,21 @@ uvicorn app:app --host 127.0.0.1 --port 8081 --reload
 
 Then open `http://127.0.0.1:8081`.
 
-### Slow first run
+### First run is slow
 
-The embedding model is downloaded and loaded locally on first use. Subsequent runs can reuse the local model cache.
+The Hugging Face embedding model is downloaded and initialized locally on first use. Later runs can reuse the model cache. Model inference also uses local CPU by default.
 
-## Limitations and production considerations
+## Limitations and production readiness
 
-- **No authentication or authorization:** the UI and API are not protected by user accounts or access controls.
-- **Local vector database:** Qdrant runs in local persistent mode; this is not a distributed or managed Qdrant deployment.
-- **Local model inference:** embeddings run on CPU by default and can be slow on resource-constrained hosts.
-- **External services:** chat/model operations send prompts and relevant context to Groq. When enabled, search queries are sent to Tavily. Review your organization's data-handling requirements before using sensitive operational material.
-- **Audit screen:** audit records are available through `GET /api/audits`, but the UI navigation item is not implemented as a history view.
-- **Database lifecycle:** conversation checkpoints and audit records are not automatically expired or pruned.
-- **Operational hardening:** before production use, add authentication, authorization, TLS, request/upload size limits, rate limiting, access logging, database backup/retention, and deployment-specific health monitoring.
+- **No authentication or authorization:** any user who can reach the app can use its UI and API, upload files, and access audit records.
+- **Development server settings:** `python app.py` binds to all interfaces and enables reload. Do not use it as a production server.
+- **Qdrant fallback is ephemeral:** without both Qdrant credentials, separate processes do not share vectors and data is lost on process exit.
+- **No upload size or content safety controls:** production deployments should set upload limits and validate files beyond filename extensions.
+- **No OCR:** image-only/scanned PDFs may yield no useful text. DOCX tables are not extracted.
+- **No vector cleanup on document replacement:** re-indexing does not remove chunks that no longer occur in a document.
+- **Model/service dependency:** chat and Self-RAG operations require Groq connectivity; Tavily is an external dependency for web fallback.
+- **No automated retention policy:** uploaded files, conversation checkpoints, and audit rows are not automatically pruned.
+- **No working audit UI:** use the audit API directly; the UI navigation control is not currently connected.
+- **No complete container deployment:** the checked-in Dockerfile is empty.
+
+Before production use, add authentication and authorization, tenant isolation if needed, TLS behind a supported deployment server, rate limiting, request and upload-size limits, access/error logging, database and Qdrant backup/retention policies, monitoring, and security review. Verify model outputs and recommendations with qualified operators; this tool should not autonomously execute production changes.
