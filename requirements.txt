@@ -1,3 +1,8 @@
+# PyTorch CPU-Only (Required to stay under Render's 512MB RAM limit)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
@@ -18,9 +23,6 @@ python-docx>=1.1.2
 
 # Model Providers (Groq + optional backups like OpenAI/Anthropic/Google)
 langchain-groq>=0.3.8
-# langchain-openai>=0.2.0     # Optional: If you want to fallback to GPT-4o / GPT-4o-mini
-# langchain-anthropic>=0.3.0  # Optional: If you want to use Claude 3.5 Sonnet
-# langchain-google-genai>=2.0.0 # Optional: If you want to use Gemini
 
 # Embeddings & Local Models
 langchain-huggingface>=0.1.0
