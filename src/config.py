@@ -14,9 +14,19 @@ class Settings(BaseModel):
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
+    # Embedding provider
+    embedding_provider: str = (os.getenv("EMBEDDING_PROVIDER", "local") or "local").lower()
+    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
+    gemini_embedding_model: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
+
     # Hugging Face Embeddings
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-    embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+    embedding_dimension: int = int(
+        os.getenv(
+            "EMBEDDING_DIMENSION",
+            "768" if (os.getenv("EMBEDDING_PROVIDER", "local") or "local").lower() == "google" else "384",
+        )
+    )
 
     # Qdrant Cloud
     qdrant_url: str = os.getenv("QDRANT_URL", "")

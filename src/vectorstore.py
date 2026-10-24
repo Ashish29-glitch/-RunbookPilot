@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpointEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -10,6 +11,15 @@ from src.config import get_settings
 @lru_cache
 def get_embeddings():
     s = get_settings()
+
+    if s.embedding_provider == "google":
+        if not s.google_api_key:
+            raise RuntimeError("GOOGLE_API_KEY is not configured")
+        return GoogleGenerativeAIEmbeddings(
+            model=s.gemini_embedding_model,
+            google_api_key=s.google_api_key,
+        )
+
     endpoint = os.getenv("HF_EMBEDDING_ENDPOINT") or os.getenv("HF_INFERENCE_ENDPOINT")
     if endpoint:
         return HuggingFaceEndpointEmbeddings(
@@ -33,12 +43,10 @@ def get_qdrant_client():
             url=s.qdrant_url,
             api_key=s.qdrant_api_key,
         )
-    # Fallback to local in-memory storage if no Cloud URL is provided
     return QdrantClient(location=":memory:")
 
 
 def ensure_collection():
-    """Ensure the Qdrant collection exists with the correct vector parameters."""
     s = get_settings()
     client = get_qdrant_client()
     

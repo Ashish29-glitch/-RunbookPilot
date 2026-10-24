@@ -244,8 +244,11 @@ Settings are read from the process environment and `.env`; defaults are defined 
 | --- | --- | --- |
 | `GROQ_API_KEY` | Empty | Required for chat and Self-RAG model calls. The ingestion script also currently requires it as a preflight check. |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model used for workflow and answer calls. |
-| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Hugging Face sentence-transformer model loaded locally. |
-| `EMBEDDING_DIMENSION` | `384` | Vector size used when creating a Qdrant collection. It must match the embedding model's output size and the existing collection. |
+| `EMBEDDING_PROVIDER` | `local` | Embedding backend: `local`, `google`, or a hosted HF endpoint if explicitly configured. |
+| `GOOGLE_API_KEY` | Empty | Required when `EMBEDDING_PROVIDER=google`. Used for Gemini text embeddings. |
+| `GEMINI_EMBEDDING_MODEL` | `models/text-embedding-004` | Google Gemini embedding model. |
+| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Hugging Face sentence-transformer model loaded locally when the provider is not Google. |
+| `EMBEDDING_DIMENSION` | `384` (or `768` for Google) | Vector size used when creating a Qdrant collection. It must match the embedding model's output size and the existing collection. |
 | `QDRANT_URL` | Empty | Qdrant service URL. Must be set together with `QDRANT_API_KEY` to use the remote Qdrant client. |
 | `QDRANT_API_KEY` | Empty | Qdrant service API key. If either Qdrant setting is missing, the implementation falls back to in-memory Qdrant. |
 | `QDRANT_COLLECTION_NAME` | `cloudops_sentinel` | Qdrant collection used for indexing and retrieval. |
@@ -262,8 +265,13 @@ Example `.env` for a typical setup:
 GROQ_API_KEY=replace_with_your_groq_api_key
 GROQ_MODEL=openai/gpt-oss-120b
 
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-EMBEDDING_DIMENSION=384
+# Choose one embedding provider:
+EMBEDDING_PROVIDER=google
+# EMBEDDING_PROVIDER=local
+GOOGLE_API_KEY=replace_with_your_google_api_key
+GEMINI_EMBEDDING_MODEL=models/text-embedding-004
+# EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_DIMENSION=768
 
 QDRANT_URL=https://your-qdrant-cluster.example
 QDRANT_API_KEY=replace_with_your_qdrant_api_key
