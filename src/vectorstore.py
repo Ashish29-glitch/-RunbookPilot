@@ -1,5 +1,6 @@
+import os
 from functools import lru_cache
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
@@ -9,8 +10,11 @@ from src.config import get_settings
 @lru_cache
 def get_embeddings():
     s = get_settings()
-    return HuggingFaceEmbeddings(
-        model_name=s.embedding_model
+    # Uses Hugging Face Cloud API to keep container RAM well under 512MB
+    return HuggingFaceEndpointEmbeddings(
+        model=s.embedding_model,
+        task="feature-extraction",
+        huggingfacehub_api_token=os.getenv("HF_TOKEN")
     )
 
 
