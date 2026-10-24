@@ -33,7 +33,7 @@ function pretty(v=''){return String(v).replaceAll('_',' ').replace(/\b\w/g,m=>m.
 
 async function ask(){
   const question=q.value.trim(); if(!question) return;
-  starters.style.display='none';
+  if(starters) starters.style.display='none';
   addMessage('user',esc(question)); q.value=''; send.disabled=true;
   const loading=addMessage('assistant',loadingMarkup());
   try{
@@ -58,7 +58,7 @@ async function ask(){
 
 send.addEventListener('click',ask);
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask();}});
-starters.addEventListener('click',e=>{const b=e.target.closest('button[data-q]');if(!b)return;q.value=b.dataset.q;q.focus();});
+starters?.addEventListener('click',e=>{const b=e.target.closest('button[data-q]');if(!b)return;q.value=b.dataset.q;q.focus();});
 fileInput.addEventListener('change',()=>{fileLabel.textContent=fileInput.files[0]?.name||'Choose runbook';uploadStatus.textContent='';});
 
 upload.addEventListener('click',async()=>{
@@ -78,6 +78,6 @@ newSessionBtn?.addEventListener('click',()=>{
   localStorage.setItem(THREAD_KEY, threadId);
   renderSession();
   messages.innerHTML = `<div class="message assistant"><div class="avatar">R</div><div class="message-body"><div class="message-label">RUNBOOKPILOT</div><div class="bubble intro">New incident memory session started. Describe the production issue and I’ll build context across your follow-up questions.</div></div></div>`;
-  starters.style.display='flex';
+  if(starters) starters.style.display='flex';
   q.value=''; q.focus();
 });

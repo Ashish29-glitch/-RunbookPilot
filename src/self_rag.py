@@ -118,7 +118,7 @@ def commit_memory(state: RAGState):
 
 def decide_retrieval(state: RAGState):
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You decide whether the question needs retrieval. Choose true for cloud operations, production incidents, service runbooks, deployment procedures, infrastructure behavior, troubleshooting steps, specific/current technical facts, or whenever evidence is needed. Choose false only for generic technical explanations that can safely be answered from general knowledge. If unsure choose true."),
+        ("system", "You decide whether the question needs retrieval from the private knowledge base. Choose true for cloud operations, production incidents, service runbooks, deployment procedures, infrastructure behavior, troubleshooting steps, specific/current technical facts, questions about a named person, company, product, team, policy, or any organization-specific information, or whenever evidence is needed. Choose false only for generic concepts that are independent of this organization and can safely be answered from general knowledge (for example, 'What is a runbook?'). A question such as 'Who is Ashish?' may refer to a person described in the private documents and must use retrieval. If unsure, choose true."),
         ("human", "Question: {question}"),
     ])
     out = _structured_llm(RetrieveDecision).invoke(prompt.format_messages(question=state["question"]))
