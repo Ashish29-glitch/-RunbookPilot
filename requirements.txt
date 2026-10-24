@@ -1,8 +1,3 @@
-# PyTorch CPU-Only (Required to stay under Render's 512MB RAM limit)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
-torchvision
-
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
@@ -21,11 +16,7 @@ tavily-python>=0.5.0
 pypdf>=5.0.0
 python-docx>=1.1.2
 
-# Model Providers (Groq + optional backups like OpenAI/Anthropic/Google)
+# Model Providers
 langchain-groq>=0.3.8
-
-# Embeddings & Local Models
-langchain-huggingface>=0.1.0
-sentence-transformers>=3.0.0
 langchain-qdrant>=0.2.0
 qdrant-client>=1.12.0
