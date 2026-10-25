@@ -1,6 +1,4 @@
-import os
 from functools import lru_cache
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpointEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -11,27 +9,15 @@ from src.config import get_settings
 @lru_cache
 def get_embeddings():
     s = get_settings()
+    if s.embedding_provider != "google":
+        raise ValueError(f"Unsupported embedding provider: {s.embedding_provider}")
+    if not s.google_api_key:
+        raise RuntimeError("GOOGLE_API_KEY is not configured")
 
-    if s.embedding_provider == "google":
-        if not s.google_api_key:
-            raise RuntimeError("GOOGLE_API_KEY is not configured")
-        return GoogleGenerativeAIEmbeddings(
-            model=s.gemini_embedding_model,
-            google_api_key=s.google_api_key,
-        )
-
-    endpoint = os.getenv("HF_EMBEDDING_ENDPOINT") or os.getenv("HF_INFERENCE_ENDPOINT")
-    if endpoint:
-        return HuggingFaceEndpointEmbeddings(
-            model=endpoint,
-            task="feature-extraction",
-            huggingfacehub_api_token=os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN"),
-        )
-
-    return HuggingFaceEmbeddings(
-        model_name=s.embedding_model,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
+    return GoogleGenerativeAIEmbeddings(
+        model=s.gemini_embedding_model,
+        api_key=s.google_api_key,
+        output_dimensionality=s.embedding_dimension,
     )
 
 

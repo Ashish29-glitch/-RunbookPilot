@@ -17,7 +17,7 @@ class Settings(BaseModel):
     # Embedding provider
     embedding_provider: str = (os.getenv("EMBEDDING_PROVIDER", "local") or "local").lower()
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
-    gemini_embedding_model: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
+    gemini_embedding_model: str = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 
     # Hugging Face Embeddings
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

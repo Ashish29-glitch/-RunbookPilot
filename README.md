@@ -75,9 +75,9 @@ For each chat request, the application follows this general path:
 
 1. **Load thread state.** LangGraph's SQLite checkpointer loads prior conversation state for the supplied `thread_id`.
 2. **Contextualize the question.** Follow-up questions are rewritten as standalone questions using recent conversation turns.
-3. **Choose a route.** The Groq model decides whether a question can use a general-knowledge response or requires evidence retrieval. Operations and incident questions are directed to retrieval.
+3. **Choose a route.** The Groq model decides whether a question can use a general-knowledge response or requires evidence retrieval. Operations, incident, and organization-specific questions are directed to private retrieval. Organization-specific questions do not use web fallback, preventing unrelated external pages from being presented as company facts.
 4. **Retrieve internal evidence.** The question is embedded locally and searched against the configured Qdrant collection. The top `TOP_K` chunks are considered.
-5. **Grade relevance.** Groq grades the retrieved chunks. If none are relevant, the graph can rewrite and retry internal retrieval up to `MAX_RETRIEVAL_REWRITES`.
+5. **Grade relevance.** Groq grades the retrieved chunks. If none are relevant, the graph can rewrite and retry internal retrieval up to `MAX_RETRIEVAL_REWRITES`. For organization-specific questions, it returns an evidence-missing response instead of searching the web if private documents do not support an answer.
 6. **Use web search if needed.** The workflow may rewrite the web query and call Tavily. Each result is graded before it can be used. If `TAVILY_API_KEY` is missing, no external search request can be made.
 7. **Generate and verify.** Groq generates an answer from the accepted evidence, checks whether its claims are supported, revises unsupported claims within `MAX_SUPPORT_RETRIES`, and checks whether the answer addresses the question.
 8. **Finish safely.** If sufficient reliable evidence is not found, the workflow returns a no-reliable-evidence response rather than recommending an unsupported troubleshooting action.
@@ -246,7 +246,7 @@ Settings are read from the process environment and `.env`; defaults are defined 
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model used for workflow and answer calls. |
 | `EMBEDDING_PROVIDER` | `local` | Embedding backend: `local`, `google`, or a hosted HF endpoint if explicitly configured. |
 | `GOOGLE_API_KEY` | Empty | Required when `EMBEDDING_PROVIDER=google`. Used for Gemini text embeddings. |
-| `GEMINI_EMBEDDING_MODEL` | `models/text-embedding-004` | Google Gemini embedding model. |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Google Gemini text embedding model. |
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Hugging Face sentence-transformer model loaded locally when the provider is not Google. |
 | `EMBEDDING_DIMENSION` | `384` (or `768` for Google) | Vector size used when creating a Qdrant collection. It must match the embedding model's output size and the existing collection. |
 | `QDRANT_URL` | Empty | Qdrant service URL. Must be set together with `QDRANT_API_KEY` to use the remote Qdrant client. |
@@ -269,7 +269,7 @@ GROQ_MODEL=openai/gpt-oss-120b
 EMBEDDING_PROVIDER=google
 # EMBEDDING_PROVIDER=local
 GOOGLE_API_KEY=replace_with_your_google_api_key
-GEMINI_EMBEDDING_MODEL=models/text-embedding-004
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 # EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIMENSION=768
 

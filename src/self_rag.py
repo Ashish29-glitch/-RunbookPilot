@@ -17,6 +17,7 @@ from src.vectorstore import get_retriever
 class RAGState(TypedDict, total=False):
     user_question: str
     question: str
+    organization_specific: bool
     memory: Annotated[List[str], operator.add]
     retrieval_query: str
     web_query: str
@@ -39,6 +40,7 @@ class RAGState(TypedDict, total=False):
 
 class RetrieveDecision(BaseModel):
     should_retrieve: bool
+    organization_specific: bool
 
 class RelevanceDecision(BaseModel):
     is_relevant: bool
@@ -118,11 +120,16 @@ def commit_memory(state: RAGState):
 
 def decide_retrieval(state: RAGState):
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You decide whether the question needs retrieval from the private knowledge base. Choose true for cloud operations, production incidents, service runbooks, deployment procedures, infrastructure behavior, troubleshooting steps, specific/current technical facts, questions about a named person, company, product, team, policy, or any organization-specific information, or whenever evidence is needed. Choose false only for generic concepts that are independent of this organization and can safely be answered from general knowledge (for example, 'What is a runbook?'). A question such as 'Who is Ashish?' may refer to a person described in the private documents and must use retrieval. If unsure, choose true."),
+        ("system", "Decide whether the question needs private-knowledge retrieval and whether it asks for organization-specific facts. Set organization_specific=true for facts about a named company, product, team, employee, internal policy, or this organization's identity and history. In particular, questions mentioning RunbookPilot and asking what it is, company details, products, people, or policies are organization-specific. Set should_retrieve=true for all organization-specific questions, operations questions, specific/current facts, or whenever evidence is needed. Choose should_retrieve=false only for generic concepts independent of the organization and safely answerable from general knowledge (for example, 'What is a runbook?'). If unsure, choose should_retrieve=true."),
         ("human", "Question: {question}"),
     ])
     out = _structured_llm(RetrieveDecision).invoke(prompt.format_messages(question=state["question"]))
-    return {"need_retrieval": out.should_retrieve, "trace": _trace(state, f"Retrieval decision: {out.should_retrieve}")}
+    organization_specific = out.organization_specific or "runbookpilot" in state["question"].casefold()
+    return {
+        "need_retrieval": out.should_retrieve or organization_specific,
+        "organization_specific": organization_specific,
+        "trace": _trace(state, f"Retrieval decision: {out.should_retrieve or organization_specific}"),
+    }
 
 
 def route_after_decide(state: RAGState) -> Literal["direct", "retrieve"]:
@@ -174,6 +181,8 @@ def route_after_relevance(state: RAGState) -> Literal["generate", "rewrite_inter
         return "no_answer"
     if state.get("retrieval_rewrites", 0) < s.max_retrieval_rewrites:
         return "rewrite_internal"
+    if state.get("organization_specific"):
+        return "no_answer"
     return "rewrite_web"
 
 
@@ -264,6 +273,8 @@ def route_after_usefulness(state: RAGState) -> Literal["end", "rewrite_internal"
     if state.get("source_mode") == "internal":
         if state.get("retrieval_rewrites", 0) < s.max_retrieval_rewrites:
             return "rewrite_internal"
+        if state.get("organization_specific"):
+            return "no_answer"
         return "rewrite_web"
     if state.get("source_mode") == "web" and state.get("web_rewrites", 0) < s.max_web_rewrites:
         return "rewrite_web"
@@ -271,7 +282,11 @@ def route_after_usefulness(state: RAGState) -> Literal["end", "rewrite_internal"
 
 
 def no_answer(state: RAGState):
-    return {"answer": "I could not find enough reliable runbook or external evidence to recommend a safe troubleshooting action.", "source_mode": "none", "trace": _trace(state, "Stopped: no reliable answer found")}
+    if state.get("organization_specific"):
+        answer = "I couldn't verify those RunbookPilot/company details from the private knowledge base. Please add or index an authoritative company profile document, then ask again."
+    else:
+        answer = "I could not find enough reliable runbook or external evidence to recommend a safe troubleshooting action."
+    return {"answer": answer, "source_mode": "none", "trace": _trace(state, "Stopped: no reliable answer found")}
 
 
 def build_graph():
@@ -347,6 +362,7 @@ def run_self_rag(question: str, thread_id: str) -> dict:
     initial: RAGState = {
         "user_question": question,
         "question": question,
+        "organization_specific": False,
         "memory": [],
         "retrieval_query": question,
         "web_query": "",
